@@ -371,7 +371,7 @@ def main():
     # ── TAB 3: METHODOLOGY / UNKNOWNS ──
     with tab_method:
         st.subheader("Brute-Force Audit Methodology")
-        st.warning("**Disclaimer:** This was built quick and dirty. Some of the extracted text looks weird (OCR artifacts, encoding issues, etc.). Looking for help cleaning this up — PRs welcome on GitHub.")
+        st.warning("**Disclaimer:** This was built quick and dirty. Some of the extracted text looks weird (OCR artifacts, encoding issues, etc.). Looking for help cleaning this up — PRs welcome on GitHub.\n\nThere are torrents circulating (check [r/DataHoarder](https://www.reddit.com/r/DataHoarder/)) that likely contain more complete collections of the Epstein files. If you have access to those, we'd welcome contributions to expand this database.")
         st.markdown("""
 On January 30, 2026, the DOJ announced the release of **3.5 million pages** of Epstein files
 under the Epstein Files Transparency Act. There is no manifest, no zip files for Datasets 8-11,
