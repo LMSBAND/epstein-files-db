@@ -2,4 +2,3 @@ streamlit
 pandas
 pyvis
 plotly
-libsql-experimental
