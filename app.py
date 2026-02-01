@@ -26,8 +26,8 @@ def main():
 
     conn = get_db()
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "Overview", "Trump Analysis", "Keyword Search", "Browse Files",
+    tab1, tab2, tab_bannon, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Overview", "Trump Analysis", "The Bannon Situation", "Keyword Search", "Browse Files",
         "Full-Text Search", "Dataset Stats", "Relationship Graph"
     ])
 
@@ -232,6 +232,125 @@ def main():
             if st.button("Load full text", key="trump_load"):
                 row = trump_files[trump_files['filename'] == selected_file].iloc[0]
                 st.text_area("Full text", row['extracted_text'], height=500)
+
+    # ── TAB: THE BANNON SITUATION ──
+    with tab_bannon:
+        st.subheader("The Bannon Situation")
+        st.caption("All references to Steve Bannon, Bannon, and the 'Bubba' email in the Epstein files")
+
+        # Search for Bannon mentions
+        bannon_files = pd.read_sql_query("""
+            SELECT DISTINCT f.id, f.filename, f.dataset, f.rel_path, tc.extracted_text, tc.char_count
+            FROM text_cache tc
+            JOIN files f ON f.id = tc.file_id
+            WHERE tc.extracted_text LIKE '%Bannon%'
+        """, conn)
+
+        # Also search for Bubba (the email where Mark Epstein asks Jeffrey to ask Bannon about Putin/Trump photos)
+        bubba_files = pd.read_sql_query("""
+            SELECT DISTINCT f.id, f.filename, f.dataset, f.rel_path, tc.extracted_text, tc.char_count
+            FROM text_cache tc
+            JOIN files f ON f.id = tc.file_id
+            WHERE tc.extracted_text LIKE '%Bubba%'
+        """, conn)
+
+        # Steve Bannon specific
+        steve_bannon_files = pd.read_sql_query("""
+            SELECT DISTINCT f.id, f.filename, f.dataset, f.rel_path, tc.extracted_text, tc.char_count
+            FROM text_cache tc
+            JOIN files f ON f.id = tc.file_id
+            WHERE tc.extracted_text LIKE '%Steve Bannon%' OR tc.extracted_text LIKE '%Stephen Bannon%'
+        """, conn)
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Files mentioning 'Bannon'", f"{len(bannon_files):,}")
+        col2.metric("Files with 'Steve/Stephen Bannon'", f"{len(steve_bannon_files):,}")
+        col3.metric("Files mentioning 'Bubba'", f"{len(bubba_files):,}")
+
+        st.markdown("---")
+
+        # Context: The Bubba Email
+        st.subheader("Key Context: The 'Bubba' Email")
+        st.markdown("""
+        From the House Oversight Committee release: Mark Epstein (Jeffrey's brother) emailed Jeffrey
+        asking him to ask **Steve Bannon** *"if Putin has the photos of Trump blowing Bubba."*
+
+        "Bubba" is a well-known nickname for **Bill Clinton**.
+
+        This email suggests:
+        1. Jeffrey Epstein had a direct line to Steve Bannon
+        2. There were alleged compromising photos involving Trump and Clinton
+        3. The implication that Russia/Putin may have possessed kompromat
+        """)
+
+        st.markdown("---")
+
+        # Co-occurring entities in Bannon files
+        if not bannon_files.empty:
+            st.subheader("Who Appears in Bannon Files")
+            bannon_ids = bannon_files['id'].tolist()
+            if bannon_ids:
+                ph = ','.join(['?'] * len(bannon_ids))
+                df_cooccur = pd.read_sql_query(f"""
+                    SELECT e.normalized as Entity, e.entity_label as Type,
+                           COUNT(DISTINCT e.file_id) as Files,
+                           SUM(e.count) as Mentions
+                    FROM entities e
+                    WHERE e.file_id IN ({ph})
+                    AND e.normalized NOT LIKE '%bannon%'
+                    GROUP BY e.normalized, e.entity_label
+                    ORDER BY Files DESC
+                    LIMIT 30
+                """, conn, params=bannon_ids)
+
+                if not df_cooccur.empty:
+                    st.dataframe(df_cooccur, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # Browse all Bannon files with context snippets
+        st.subheader("All Files Mentioning Bannon")
+        st.caption(f"{len(bannon_files)} files found")
+
+        if not bannon_files.empty:
+            for _, row in bannon_files.iterrows():
+                text = row['extracted_text']
+                lower = text.lower()
+                idx = lower.find('bannon')
+                if idx >= 0:
+                    start = max(0, idx - 300)
+                    end = min(len(text), idx + 300)
+                    snippet = text[start:end].strip()
+                else:
+                    snippet = text[:600]
+
+                with st.expander(f"[DS{row['dataset']}] {row['filename']} ({row['char_count']:,} chars)"):
+                    st.markdown(f"Path: `{row['rel_path']}`")
+                    st.markdown(f"...{snippet}...")
+                    if st.button("Show full text", key=f"bannon_full_{row['id']}"):
+                        st.text_area("Full text", text, height=500, key=f"bannon_text_{row['id']}")
+
+        # Same for Bubba if different files
+        bubba_only = bubba_files[~bubba_files['id'].isin(bannon_files['id'])] if not bannon_files.empty else bubba_files
+        if not bubba_only.empty:
+            st.markdown("---")
+            st.subheader("Additional Files Mentioning 'Bubba' (not in Bannon results)")
+            for _, row in bubba_only.iterrows():
+                text = row['extracted_text']
+                lower = text.lower()
+                idx = lower.find('bubba')
+                if idx >= 0:
+                    start = max(0, idx - 300)
+                    end = min(len(text), idx + 300)
+                    snippet = text[start:end].strip()
+                else:
+                    snippet = text[:600]
+
+                with st.expander(f"[DS{row['dataset']}] {row['filename']} ({row['char_count']:,} chars)"):
+                    st.markdown(f"Path: `{row['rel_path']}`")
+                    st.markdown(f"...{snippet}...")
+                    if st.button("Show full text", key=f"bubba_full_{row['id']}"):
+                        st.text_area("Full text", text, height=500, key=f"bubba_text_{row['id']}")
 
     # ── TAB 3: KEYWORD SEARCH RESULTS ──
     with tab3:
@@ -504,8 +623,13 @@ def main():
             if not has_cooccur:
                 st.info("Run co-occurrence analysis: `.venv/bin/python ner_extract.py cooccur`")
             else:
-                min_weight = st.slider("Minimum shared files", 2, 20, 3)
-                max_nodes = st.slider("Max nodes", 20, 300, 100)
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    min_weight = st.slider("Minimum shared files", 2, 20, 3)
+                with col_b:
+                    max_nodes = st.slider("Max nodes", 20, 300, 100)
+                with col_c:
+                    show_orgs = st.checkbox("Show organizations", value=True)
 
                 # Build graph with pyvis
                 graph_path = BASE_DIR / "output" / "entity_graph.html"
@@ -514,40 +638,97 @@ def main():
                     try:
                         from pyvis.network import Network
 
-                        top_entities = conn.execute("""
+                        # Key figures to always include regardless of threshold
+                        vip_names = {
+                            'jeffrey epstein', 'ghislaine maxwell', 'donald trump',
+                            'donald j. trump', 'bill clinton', 'prince andrew',
+                            'alan dershowitz', 'les wexner', 'jean-luc brunel',
+                            'virginia roberts', 'virginia giuffre',
+                        }
+
+                        # Get top entities by file count
+                        entity_types = ('PERSON', 'ORG') if show_orgs else ('PERSON',)
+                        type_ph = ','.join(['?'] * len(entity_types))
+                        top_entities = conn.execute(f"""
                             SELECT normalized, entity_label, SUM(count) as total, COUNT(DISTINCT file_id) as files
-                            FROM entities WHERE entity_label IN ('PERSON', 'ORG')
+                            FROM entities WHERE entity_label IN ({type_ph})
                             GROUP BY normalized HAVING files >= ?
                             ORDER BY files DESC LIMIT ?
-                        """, (min_weight, max_nodes)).fetchall()
+                        """, list(entity_types) + [min_weight, max_nodes]).fetchall()
 
                         entity_set = {e[0] for e in top_entities}
                         entity_info = {e[0]: (e[1], e[2], e[3]) for e in top_entities}
 
+                        # Force-add VIPs even if below threshold
+                        for vip in vip_names:
+                            if vip not in entity_set:
+                                row = conn.execute("""
+                                    SELECT normalized, entity_label, SUM(count), COUNT(DISTINCT file_id)
+                                    FROM entities WHERE normalized = ?
+                                    GROUP BY normalized
+                                """, (vip,)).fetchone()
+                                if row:
+                                    entity_set.add(row[0])
+                                    entity_info[row[0]] = (row[1], row[2], row[3])
+
+                        # Get edges - include any edge where at least one side is a VIP (min 1 shared file)
                         edges = conn.execute("""
                             SELECT entity_a, entity_b, file_count
                             FROM entity_cooccurrence WHERE file_count >= ?
                             ORDER BY file_count DESC
                         """, (min_weight,)).fetchall()
 
+                        # Also grab VIP edges at lower threshold
+                        vip_list = list(vip_names)
+                        vip_ph = ','.join(['?'] * len(vip_list))
+                        vip_edges = conn.execute(f"""
+                            SELECT entity_a, entity_b, file_count
+                            FROM entity_cooccurrence
+                            WHERE file_count >= 1
+                            AND (entity_a IN ({vip_ph}) OR entity_b IN ({vip_ph}))
+                            ORDER BY file_count DESC
+                        """, vip_list + vip_list).fetchall()
+
+                        all_edges = {(a, b): w for a, b, w in edges}
+                        for a, b, w in vip_edges:
+                            if (a, b) not in all_edges:
+                                all_edges[(a, b)] = w
+
                         net = Network(height="700px", width="100%", bgcolor="#0e1117", font_color="white")
                         net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=200)
 
                         colors = {"PERSON": "#e74c3c", "ORG": "#3498db"}
+                        epstein_names = {'jeffrey epstein', 'epstein', 'jeffrey'}
+                        # VIPs get yellow/gold so they stand out
                         added = set()
                         edge_count = 0
-                        for a, b, w in edges:
+                        for (a, b), w in all_edges.items():
                             if a not in entity_set or b not in entity_set:
                                 continue
                             for node in (a, b):
                                 if node not in added:
                                     lt, tot, files = entity_info.get(node, ("PERSON", 1, 1))
-                                    net.add_node(node, label=node, color=colors.get(lt, "#95a5a6"),
-                                               size=min(8 + files * 2, 50),
-                                               title=f"{node}\n{lt}\n{files} files")
+                                    if not show_orgs and lt == "ORG":
+                                        continue
+                                    if node in epstein_names:
+                                        color = "#00ff41"  # matrix green
+                                        size = 60
+                                        shape = "diamond"
+                                    elif node in vip_names:
+                                        color = "#f1c40f"  # gold
+                                        size = max(25, min(8 + files * 2, 50))
+                                        shape = "star"
+                                    else:
+                                        color = colors.get(lt, "#95a5a6")
+                                        size = min(8 + files * 2, 50)
+                                        shape = "dot"
+                                    net.add_node(node, label=node, color=color, size=size,
+                                               shape=shape,
+                                               title=f"{node}\n{lt}\n{files} files, {tot} mentions")
                                     added.add(node)
-                            net.add_edge(a, b, value=w, title=f"{w} shared files")
-                            edge_count += 1
+                            if a in added and b in added:
+                                net.add_edge(a, b, value=w, title=f"{w} shared files")
+                                edge_count += 1
 
                         graph_path.parent.mkdir(parents=True, exist_ok=True)
                         net.save_graph(str(graph_path))
@@ -555,6 +736,16 @@ def main():
                         st.caption(f"{len(added)} nodes, {edge_count} edges")
                         with open(graph_path, 'r') as f:
                             st.components.v1.html(f.read(), height=720, scrolling=True)
+
+                        # Legend
+                        st.markdown("""
+                        **Legend:**
+                        - :green[**Green Diamond**] — Jeffrey Epstein
+                        - :orange[**Gold Star**] — Key figures (Trump, Clinton, Prince Andrew, Maxwell, Dershowitz, etc.)
+                        - :red[**Red Dot**] — Other people
+                        - :blue[**Blue Dot**] — Organizations
+                        - **Line thickness** = number of shared files
+                        """)
                     except ImportError:
                         st.error("pyvis not installed. Run: pip install pyvis")
 
