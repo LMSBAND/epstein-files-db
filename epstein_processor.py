@@ -78,7 +78,14 @@ DEFAULT_KEYWORDS = [
     "Rupert Murdoch",
     "Michael Jackson",
     "Mick Jagger",
-    
+    "George Bush",
+    "George W. Bush",
+    "George H.W. Bush",
+    "Jeb Bush",
+    "Joe Biden",
+    "Biden",
+    "Lindsey Graham",
+
     # === SILICON VALLEY / TECH ===
     "Bill Gates",
     "Melinda Gates",

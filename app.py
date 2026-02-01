@@ -2,12 +2,14 @@
 """Streamlit app to explore Epstein files database."""
 
 import sqlite3
+import re
 import pandas as pd
 import streamlit as st
 from pathlib import Path
 
 DB_PATH = Path("./epstein_files/epstein.db")
 BASE_DIR = Path("./epstein_files")
+KEYWORDS_FILE = Path("./custom_keywords.txt")
 
 
 @st.cache_resource
@@ -24,8 +26,9 @@ def main():
 
     conn = get_db()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Overview", "Keyword Search", "Browse Files", "Full-Text Search", "Dataset Stats"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Overview", "Trump Analysis", "Keyword Search", "Browse Files",
+        "Full-Text Search", "Dataset Stats", "Relationship Graph"
     ])
 
     # ── TAB 1: OVERVIEW ──
@@ -79,8 +82,159 @@ def main():
         - **99.92% of file slots are empty**
         """)
 
-    # ── TAB 2: KEYWORD SEARCH RESULTS ──
+    # ── TAB 2: TRUMP ANALYSIS ──
     with tab2:
+        st.subheader("Donald Trump - Epstein Files Analysis")
+
+        # Key metrics
+        trump_files = pd.read_sql_query("""
+            SELECT DISTINCT f.id, f.filename, f.dataset, f.rel_path, tc.extracted_text, tc.char_count
+            FROM text_cache tc
+            JOIN files f ON f.id = tc.file_id
+            WHERE tc.extracted_text LIKE '%Trump%'
+        """, conn)
+
+        trump_donald = pd.read_sql_query("""
+            SELECT DISTINCT f.id, f.filename, f.dataset
+            FROM text_cache tc JOIN files f ON f.id = tc.file_id
+            WHERE tc.extracted_text LIKE '%Donald Trump%'
+        """, conn)
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Files mentioning 'Trump'", f"{len(trump_files):,}")
+        col2.metric("Files with 'Donald Trump'", f"{len(trump_donald):,}")
+
+        # Count total Trump mentions across all text
+        trump_total = conn.execute("""
+            SELECT SUM(length(extracted_text) - length(replace(lower(extracted_text), 'trump', ''))) / 5
+            FROM text_cache WHERE extracted_text LIKE '%Trump%'
+        """).fetchone()[0] or 0
+        col3.metric("Total 'Trump' mentions", f"{trump_total:,}")
+
+        # Mar-a-Lago mentions
+        mal_count = conn.execute("SELECT COUNT(*) FROM text_cache WHERE extracted_text LIKE '%Mar-a-Lago%'").fetchone()[0]
+        col4.metric("Mar-a-Lago mentions", f"{mal_count}")
+
+        st.markdown("---")
+
+        # ── Trump files by dataset ──
+        st.subheader("Trump References by Dataset")
+        df_trump_ds = trump_files.groupby('dataset').size().reset_index(name='Files')
+        df_trump_ds.columns = ['Dataset', 'Files']
+        st.bar_chart(df_trump_ds.set_index('Dataset'))
+
+        # ── Co-occurrence: Who appears WITH Trump ──
+        st.subheader("Who Appears in the Same Files as Trump")
+        st.caption("Keywords that co-occur with 'Trump' in the same documents")
+
+        trump_file_ids = trump_files['id'].tolist()
+        if trump_file_ids:
+            placeholders = ','.join(['?'] * len(trump_file_ids))
+            df_cooccur = pd.read_sql_query(f"""
+                SELECT sr.keyword as 'Name',
+                       COUNT(DISTINCT sr.file_id) as 'Shared Files',
+                       SUM(sr.match_count) as 'Total Mentions'
+                FROM search_results sr
+                WHERE sr.file_id IN ({placeholders})
+                AND sr.keyword NOT IN ('Donald Trump', 'Trump')
+                GROUP BY sr.keyword
+                ORDER BY COUNT(DISTINCT sr.file_id) DESC
+                LIMIT 30
+            """, conn, params=trump_file_ids)
+
+            if not df_cooccur.empty:
+                st.bar_chart(df_cooccur.set_index('Name')['Shared Files'])
+                st.dataframe(df_cooccur, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # ── Key categories ──
+        st.subheader("Document Categories")
+
+        categories = {
+            'Rape/Sexual Assault Allegations': ['rape', 'Katie Johnson', 'sexual abuse', 'sexual assault'],
+            'Deutsche Bank Connection': ['Deutsche Bank'],
+            'Mar-a-Lago / Palm Beach': ['Mar-a-Lago', 'Palm Beach'],
+            'Flight Records': ['flight', 'Lolita Express'],
+            'Legal Proceedings': ['lawsuit', 'deposition', 'testimony', 'indicted'],
+            'Virginia Roberts/Giuffre': ['Virginia Roberts', 'Virginia Giuffre', 'Giuffre'],
+            'Ghislaine Maxwell': ['Ghislaine', 'Maxwell'],
+            'Prince Andrew': ['Prince Andrew', 'Duke of York'],
+            'Bill Clinton': ['Bill Clinton', 'Clinton'],
+        }
+
+        cat_data = []
+        for cat_name, terms in categories.items():
+            count = 0
+            for term in terms:
+                c = conn.execute("""
+                    SELECT COUNT(DISTINCT tc.file_id) FROM text_cache tc
+                    WHERE tc.file_id IN (SELECT id FROM files WHERE id IN (
+                        SELECT DISTINCT f.id FROM text_cache t2
+                        JOIN files f ON f.id = t2.file_id
+                        WHERE t2.extracted_text LIKE '%Trump%'
+                    ))
+                    AND tc.extracted_text LIKE ?
+                """, (f"%{term}%",)).fetchone()[0]
+                count = max(count, c)
+            cat_data.append({'Category': cat_name, 'Trump Files': count})
+
+        df_cats = pd.DataFrame(cat_data).sort_values('Trump Files', ascending=False)
+        st.bar_chart(df_cats.set_index('Category'))
+
+        st.markdown("---")
+
+        # ── Timeline: documents mentioning Trump by context ──
+        st.subheader("Key Document Evidence")
+
+        evidence = [
+            ("Katie Johnson Rape Allegation",
+             "accusing Epstein and real estate businessman Donald Trump of raping her in 1994, when she was 13 years old",
+             "Multiple FBI/DOJ files document the April 2016 federal lawsuit"),
+            ("Deutsche Bank - Trump Relationship",
+             "As per KYCS account is part of DONALD TRUMP relationship. The purpose of this account will then be used to make payments to vendors",
+             "Internal bank compliance notes linking Trump accounts to Epstein-related banking"),
+            ("Mar-a-Lago Connection",
+             "In 2000 she and Epstein were seen on holiday with Prince Andrew at Donald Trump's Mar-a-Lago Club in Palm Beach",
+             "Maxwell, Epstein, and Prince Andrew socializing at Trump's property"),
+            ("Social Circle",
+             "A part-time Palm Beacher who has socialized with Donald Trump, Bill Clinton and Kevin Spacey was jailed",
+             "Palm Beach Post reporting on Epstein's social connections"),
+            ("jeevacation@gmail.com - Trump Email",
+             "From: Thomas Jr., Landon To: Jeffrey E. jeevacation@gmail.com Subject: Re: Trump",
+             "December 2015 email from Epstein's Gmail discussing Trump during presidential campaign"),
+            ("NYMag Profile",
+             "He's pals with...socialite Ghislaine Maxwell, even Donald Trump",
+             "New York Magazine profile of Epstein's social network"),
+        ]
+
+        for title, quote, note in evidence:
+            with st.expander(title):
+                st.markdown(f"> {quote}")
+                st.caption(note)
+
+        st.markdown("---")
+
+        # ── Browse all Trump files ──
+        st.subheader("All Files Mentioning Trump")
+        st.caption(f"{len(trump_files)} files found")
+
+        df_display = trump_files[['filename', 'dataset', 'char_count', 'rel_path']].copy()
+        df_display.columns = ['File', 'Dataset', 'Text Length', 'Path']
+        df_display = df_display.sort_values('Dataset')
+        st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
+
+        # View individual Trump file
+        st.subheader("Read a Trump File")
+        trump_filenames = trump_files['filename'].tolist()
+        if trump_filenames:
+            selected_file = st.selectbox("Select file", trump_filenames)
+            if st.button("Load full text", key="trump_load"):
+                row = trump_files[trump_files['filename'] == selected_file].iloc[0]
+                st.text_area("Full text", row['extracted_text'], height=500)
+
+    # ── TAB 3: KEYWORD SEARCH RESULTS ──
+    with tab3:
         st.subheader("Keyword Hit Summary")
 
         # Get all keywords with counts
@@ -124,8 +278,8 @@ def main():
             st.write(f"**{selected_kw}**: {len(df_detail)} files (showing top 100)")
             st.dataframe(df_detail, use_container_width=True, hide_index=True, height=400)
 
-    # ── TAB 3: BROWSE FILES ──
-    with tab3:
+    # ── TAB 4: BROWSE FILES ──
+    with tab4:
         st.subheader("Browse Files")
 
         col1, col2, col3 = st.columns(3)
@@ -181,8 +335,8 @@ def main():
             else:
                 st.warning("File ID not found")
 
-    # ── TAB 4: FULL-TEXT SEARCH ──
-    with tab4:
+    # ── TAB 5: FULL-TEXT SEARCH ──
+    with tab5:
         st.subheader("Search All Extracted Text")
         st.caption("Search across 146M+ characters of extracted text")
 
@@ -238,9 +392,11 @@ def main():
                 with results_area.expander(f"[DS{ds}] {fname} (ID: {fid})"):
                     st.markdown(f"Path: `{rel_path}`")
                     st.markdown(f"...{highlighted}...")
+                    if st.button(f"Show full text", key=f"full_{fid}"):
+                        st.text_area("Full extracted text", text, height=500, key=f"text_{fid}")
 
-    # ── TAB 5: DATASET STATS ──
-    with tab5:
+    # ── TAB 6: DATASET STATS ──
+    with tab6:
         st.subheader("Bruteforce Audit Results")
 
         st.markdown("""
@@ -287,6 +443,222 @@ def main():
             ORDER BY MIN(char_count)
         """, conn)
         st.bar_chart(df_text.set_index("Text Length"))
+
+    # ── TAB 7: RELATIONSHIP GRAPH ──
+    with tab7:
+        st.subheader("Entity Relationship Graph")
+
+        # Check if entities table exists and has data
+        has_entities = False
+        try:
+            ent_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            has_entities = ent_count > 0
+        except Exception:
+            pass
+
+        if not has_entities:
+            st.warning("No entities extracted yet. Run: `.venv/bin/python ner_extract.py extract`")
+            st.code(".venv/bin/python ner_extract.py extract", language="bash")
+        else:
+            col1, col2, col3 = st.columns(3)
+            total_ents = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            unique_ents = conn.execute("SELECT COUNT(DISTINCT normalized) FROM entities").fetchone()[0]
+            files_with_ents = conn.execute("SELECT COUNT(DISTINCT file_id) FROM entities").fetchone()[0]
+            col1.metric("Total Entity Mentions", f"{total_ents:,}")
+            col2.metric("Unique Entities", f"{unique_ents:,}")
+            col3.metric("Files with Entities", f"{files_with_ents:,}")
+
+            st.markdown("---")
+
+            # Top people
+            st.subheader("Top People Mentioned")
+            df_people = pd.read_sql_query("""
+                SELECT normalized as Name, entity_label as Type,
+                       SUM(count) as Mentions, COUNT(DISTINCT file_id) as Files
+                FROM entities WHERE entity_label = 'PERSON'
+                GROUP BY normalized ORDER BY Files DESC LIMIT 50
+            """, conn)
+            st.dataframe(df_people, use_container_width=True)
+
+            # Top orgs
+            st.subheader("Top Organizations")
+            df_orgs = pd.read_sql_query("""
+                SELECT normalized as Name,
+                       SUM(count) as Mentions, COUNT(DISTINCT file_id) as Files
+                FROM entities WHERE entity_label = 'ORG'
+                GROUP BY normalized ORDER BY Files DESC LIMIT 30
+            """, conn)
+            st.dataframe(df_orgs, use_container_width=True)
+
+            # Co-occurrence graph
+            st.markdown("---")
+            st.subheader("Co-occurrence Network")
+
+            has_cooccur = False
+            try:
+                cooccur_count = conn.execute("SELECT COUNT(*) FROM entity_cooccurrence").fetchone()[0]
+                has_cooccur = cooccur_count > 0
+            except Exception:
+                pass
+
+            if not has_cooccur:
+                st.info("Run co-occurrence analysis: `.venv/bin/python ner_extract.py cooccur`")
+            else:
+                min_weight = st.slider("Minimum shared files", 2, 20, 3)
+                max_nodes = st.slider("Max nodes", 20, 300, 100)
+
+                # Build graph with pyvis
+                graph_path = BASE_DIR / "output" / "entity_graph.html"
+
+                if st.button("Generate Graph") or graph_path.exists():
+                    try:
+                        from pyvis.network import Network
+
+                        top_entities = conn.execute("""
+                            SELECT normalized, entity_label, SUM(count) as total, COUNT(DISTINCT file_id) as files
+                            FROM entities WHERE entity_label IN ('PERSON', 'ORG')
+                            GROUP BY normalized HAVING files >= ?
+                            ORDER BY files DESC LIMIT ?
+                        """, (min_weight, max_nodes)).fetchall()
+
+                        entity_set = {e[0] for e in top_entities}
+                        entity_info = {e[0]: (e[1], e[2], e[3]) for e in top_entities}
+
+                        edges = conn.execute("""
+                            SELECT entity_a, entity_b, file_count
+                            FROM entity_cooccurrence WHERE file_count >= ?
+                            ORDER BY file_count DESC
+                        """, (min_weight,)).fetchall()
+
+                        net = Network(height="700px", width="100%", bgcolor="#0e1117", font_color="white")
+                        net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=200)
+
+                        colors = {"PERSON": "#e74c3c", "ORG": "#3498db"}
+                        added = set()
+                        edge_count = 0
+                        for a, b, w in edges:
+                            if a not in entity_set or b not in entity_set:
+                                continue
+                            for node in (a, b):
+                                if node not in added:
+                                    lt, tot, files = entity_info.get(node, ("PERSON", 1, 1))
+                                    net.add_node(node, label=node, color=colors.get(lt, "#95a5a6"),
+                                               size=min(8 + files * 2, 50),
+                                               title=f"{node}\n{lt}\n{files} files")
+                                    added.add(node)
+                            net.add_edge(a, b, value=w, title=f"{w} shared files")
+                            edge_count += 1
+
+                        graph_path.parent.mkdir(parents=True, exist_ok=True)
+                        net.save_graph(str(graph_path))
+
+                        st.caption(f"{len(added)} nodes, {edge_count} edges")
+                        with open(graph_path, 'r') as f:
+                            st.components.v1.html(f.read(), height=720, scrolling=True)
+                    except ImportError:
+                        st.error("pyvis not installed. Run: pip install pyvis")
+
+            # Entity search
+            st.markdown("---")
+            st.subheader("Search Entities")
+            entity_query = st.text_input("Search for a person or org", placeholder="e.g. Trump, Deutsche Bank")
+            if entity_query:
+                df_search = pd.read_sql_query("""
+                    SELECT e.normalized as Entity, e.entity_label as Type,
+                           f.filename as File, f.dataset as DS, e.count as Mentions
+                    FROM entities e JOIN files f ON f.id = e.file_id
+                    WHERE e.normalized LIKE ?
+                    ORDER BY e.count DESC LIMIT 100
+                """, conn, params=(f"%{entity_query.lower()}%",))
+                st.dataframe(df_search, use_container_width=True)
+
+    # ── SIDEBAR: KEYWORD MANAGEMENT ──
+    with st.sidebar:
+        st.header("Keyword Management")
+
+        # Show current keyword count
+        kw_count = conn.execute("SELECT COUNT(DISTINCT keyword) FROM search_results").fetchone()[0]
+        st.metric("Keywords in DB", kw_count)
+
+        st.markdown("---")
+        st.subheader("Add New Keywords")
+        st.caption("Add keywords and run search to index them permanently in the database")
+
+        new_keywords = st.text_area(
+            "New keywords (one per line)",
+            placeholder="George Bush\nJoe Biden\nLindsey Graham",
+            height=150
+        )
+
+        if st.button("Search & Add to Database"):
+            keywords = [k.strip() for k in new_keywords.strip().split('\n') if k.strip()]
+            if keywords:
+                status = st.status(f"Searching {len(keywords)} keywords...", expanded=True)
+                patterns = {kw: re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords}
+
+                # Get all text
+                rows = conn.execute("""
+                    SELECT f.id, f.filename, tc.extracted_text
+                    FROM files f JOIN text_cache tc ON tc.file_id = f.id
+                    WHERE tc.char_count > 0
+                """).fetchall()
+
+                total_hits = 0
+                for kw, pattern in patterns.items():
+                    # Clear old results for this keyword
+                    conn.execute("DELETE FROM search_results WHERE keyword = ?", (kw,))
+                    kw_hits = 0
+                    for file_id, filename, text in rows:
+                        matches = list(pattern.finditer(text))
+                        if matches:
+                            m = matches[0]
+                            start = max(0, m.start() - 150)
+                            end = min(len(text), m.end() + 150)
+                            context = ' '.join(text[start:end].split())
+                            conn.execute(
+                                "INSERT INTO search_results (file_id, keyword, match_count, context) VALUES (?, ?, ?, ?)",
+                                (file_id, kw, len(matches), context)
+                            )
+                            kw_hits += len(matches)
+                    total_hits += kw_hits
+                    status.update(label=f"'{kw}': {kw_hits} matches")
+
+                conn.commit()
+
+                # Also append to epstein_processor.py keyword list
+                import sys
+                sys.path.insert(0, '.')
+                try:
+                    from epstein_processor import DEFAULT_KEYWORDS
+                    existing = set(DEFAULT_KEYWORDS)
+                except ImportError:
+                    existing = set()
+
+                new_to_add = [kw for kw in keywords if kw not in existing]
+                if new_to_add:
+                    # Append to the file
+                    with open('epstein_processor.py', 'r') as f:
+                        content = f.read()
+                    # Find the end of DEFAULT_KEYWORDS list
+                    insert_point = content.rfind(']', 0, content.find('DEFAULT_KEYWORDS') + content[content.find('DEFAULT_KEYWORDS'):].find(']') + 1)
+                    if insert_point == -1:
+                        insert_point = content.find('\n]\n', content.find('DEFAULT_KEYWORDS'))
+                    # Just save to custom file instead - safer
+                    with open(str(KEYWORDS_FILE), 'a') as f:
+                        for kw in new_to_add:
+                            f.write(kw + '\n')
+
+                status.update(label=f"Done - {total_hits} total matches for {len(keywords)} keywords", state="complete")
+                st.rerun()
+
+        st.markdown("---")
+
+        # Show custom keywords file
+        if KEYWORDS_FILE.exists():
+            custom = KEYWORDS_FILE.read_text().strip()
+            if custom:
+                st.subheader("Custom Keywords Added")
+                st.code(custom)
 
 
 if __name__ == "__main__":
