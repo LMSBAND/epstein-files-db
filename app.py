@@ -1,53 +1,19 @@
 #!/usr/bin/env python3
 """Streamlit app to explore Epstein files — graph-centered."""
 
-import sqlite3
 import re
-import gzip
-import urllib.request
+import libsql_experimental as libsql
 import pandas as pd
 import streamlit as st
-from pathlib import Path
-
-DB_PATH = Path("./epstein_files/epstein.db")
-BASE_DIR = Path("./epstein_files")
-
-RELEASE_URL = "https://github.com/LMSBAND/epstein-files-db/releases/download/v1.0"
-DB_PARTS = ["epstein.db.gz.part-aa", "epstein.db.gz.part-ab", "epstein.db.gz.part-ac", "epstein.db.gz.part-ad"]
 
 
 @st.cache_resource
 def get_db():
-    if not DB_PATH.exists():
-        _download_db()
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn = libsql.connect(
+        database=st.secrets["TURSO_URL"],
+        auth_token=st.secrets["TURSO_TOKEN"],
+    )
     return conn
-
-
-def _download_db():
-    """Download and reassemble the DB from GitHub release parts."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    gz_path = DB_PATH.parent / "epstein.db.gz"
-
-    progress = st.empty()
-    progress.info("Downloading database from GitHub release (155MB)...")
-
-    with open(gz_path, "wb") as out:
-        for i, part in enumerate(DB_PARTS):
-            progress.info(f"Downloading part {i+1}/{len(DB_PARTS)}: {part}")
-            url = f"{RELEASE_URL}/{part}"
-            urllib.request.urlretrieve(url, gz_path.parent / part)
-            with open(gz_path.parent / part, "rb") as p:
-                out.write(p.read())
-            (gz_path.parent / part).unlink()
-
-    progress.info("Decompressing database...")
-    with gzip.open(gz_path, "rb") as f_in, open(DB_PATH, "wb") as f_out:
-        while chunk := f_in.read(8 * 1024 * 1024):
-            f_out.write(chunk)
-    gz_path.unlink()
-    progress.success("Database ready!")
 
 
 def main():
@@ -62,17 +28,11 @@ def main():
     st.title("Epstein Files DB")
     st.caption(f"{total_files:,} files | {total_ents:,} people identified | {cooccur_edges:,} relationship edges")
 
-    # DB download button
-    db_file = Path(DB_PATH)
-    if db_file.exists():
-        with open(db_file, "rb") as f:
-            st.download_button(
-                label="⬇ PLEASE DOWNLOAD THE DATABASE",
-                data=f,
-                file_name="epstein.db",
-                mime="application/x-sqlite3",
-                type="primary",
-            )
+    st.link_button(
+        "⬇ Download the full database (SQLite, ~835 MB)",
+        "https://github.com/LMSBAND/epstein-files-db/releases/tag/v1.0",
+        type="primary",
+    )
 
     tab_graph, tab_search, tab_method = st.tabs(["Relationship Graph", "Search", "Methodology / Unknowns"])
 
@@ -84,8 +44,6 @@ def main():
         with col_b:
             max_nodes = st.slider("Max nodes", 20, 300, 100)
 
-        graph_path = BASE_DIR / "output" / "entity_graph.html"
-
         try:
             from pyvis.network import Network
 
@@ -96,7 +54,6 @@ def main():
                 'virginia roberts', 'virginia giuffre',
             }
 
-            # Get top PERSON entities
             top_entities = conn.execute("""
                 SELECT normalized, entity_label, SUM(count) as total, COUNT(DISTINCT file_id) as files
                 FROM entities WHERE entity_label = 'PERSON'
@@ -107,7 +64,6 @@ def main():
             entity_set = {e[0] for e in top_entities}
             entity_info = {e[0]: (e[1], e[2], e[3]) for e in top_entities}
 
-            # Force-add VIPs
             for vip in vip_names:
                 if vip not in entity_set:
                     row = conn.execute("""
@@ -119,14 +75,12 @@ def main():
                         entity_set.add(row[0])
                         entity_info[row[0]] = (row[1], row[2], row[3])
 
-            # Get edges
             edges = conn.execute("""
                 SELECT entity_a, entity_b, file_count
                 FROM entity_cooccurrence WHERE file_count >= ?
                 ORDER BY file_count DESC
             """, (min_weight,)).fetchall()
 
-            # VIP edges at lower threshold
             vip_list = list(vip_names)
             vip_ph = ','.join(['?'] * len(vip_list))
             vip_edges = conn.execute(f"""
@@ -172,12 +126,15 @@ def main():
                     net.add_edge(a, b, value=w, title=f"{w} shared files")
                     edge_count += 1
 
-            graph_path.parent.mkdir(parents=True, exist_ok=True)
-            net.save_graph(str(graph_path))
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w") as tmp:
+                net.save_graph(tmp.name)
+                graph_html_path = tmp.name
 
             st.caption(f"{len(added)} nodes, {edge_count} edges")
-            with open(graph_path, 'r') as f:
+            with open(graph_html_path, 'r') as f:
                 st.components.v1.html(f.read(), height=720, scrolling=True)
+            os.unlink(graph_html_path)
 
             st.markdown("""
             **Legend:**
@@ -194,13 +151,11 @@ def main():
         st.markdown("---")
         st.subheader("Explore a Person")
 
-        # Build list of people in the graph for the selectbox
         people_in_graph = sorted(added) if 'added' in dir() and added else []
         if people_in_graph:
             selected_person = st.selectbox("Select person from graph", [""] + people_in_graph)
 
             if selected_person:
-                # Stats
                 stats = conn.execute("""
                     SELECT SUM(count), COUNT(DISTINCT file_id)
                     FROM entities WHERE normalized = ?
@@ -211,7 +166,6 @@ def main():
                 col1.metric("Total mentions", f"{mentions:,}")
                 col2.metric("Files appeared in", f"{file_count:,}")
 
-                # Connections
                 st.subheader(f"Connections: {selected_person}")
                 df_connections = pd.read_sql_query("""
                     SELECT
@@ -228,7 +182,6 @@ def main():
                 else:
                     st.info("No co-occurrence connections found.")
 
-                # Files
                 st.subheader(f"Files mentioning {selected_person}")
                 df_files = pd.read_sql_query("""
                     SELECT f.filename as File, f.dataset as DS, e.count as Mentions, f.rel_path as Path
@@ -243,165 +196,86 @@ def main():
 
     # ── TAB 2: SEARCH ──
     with tab_search:
-        search_mode = st.radio("Search mode", ["Person / Relationships", "Full-Text Search"], horizontal=True)
+        st.subheader("Search People & Relationships")
+        person_query = st.text_input("Person name", placeholder="e.g. donald trump, les wexner, virginia")
 
-        if search_mode == "Person / Relationships":
-            st.subheader("Search People & Relationships")
-            person_query = st.text_input("Person name", placeholder="e.g. donald trump, les wexner, virginia")
+        if person_query:
+            query_lower = person_query.lower().strip()
 
-            if person_query:
-                query_lower = person_query.lower().strip()
+            df_matches = pd.read_sql_query("""
+                SELECT normalized as Name, SUM(count) as Mentions, COUNT(DISTINCT file_id) as Files
+                FROM entities WHERE entity_label = 'PERSON' AND normalized LIKE ?
+                GROUP BY normalized ORDER BY Files DESC LIMIT 20
+            """, conn, params=[f"%{query_lower}%"])
 
-                # Find matching entities
-                df_matches = pd.read_sql_query("""
-                    SELECT normalized as Name, SUM(count) as Mentions, COUNT(DISTINCT file_id) as Files
-                    FROM entities WHERE entity_label = 'PERSON' AND normalized LIKE ?
-                    GROUP BY normalized ORDER BY Files DESC LIMIT 20
-                """, conn, params=[f"%{query_lower}%"])
+            if df_matches.empty:
+                st.warning(f"No person matching '{person_query}' found in entities.")
+            else:
+                st.dataframe(df_matches, width='stretch', hide_index=True)
 
-                if df_matches.empty:
-                    st.warning(f"No person matching '{person_query}' found in entities.")
+                top_match = df_matches.iloc[0]['Name']
+                st.subheader(f"Relationships: {top_match}")
+
+                df_rels = pd.read_sql_query("""
+                    SELECT
+                        CASE WHEN entity_a = ? THEN entity_b ELSE entity_a END as Connected_To,
+                        file_count as Shared_Files
+                    FROM entity_cooccurrence
+                    WHERE entity_a = ? OR entity_b = ?
+                    ORDER BY file_count DESC
+                    LIMIT 50
+                """, conn, params=[top_match, top_match, top_match])
+
+                if not df_rels.empty:
+                    import plotly.express as px
+                    fig = px.pie(
+                        df_rels.head(20), values='Shared_Files', names='Connected_To',
+                        title=f"Top connections for {top_match}",
+                        hole=0.3,
+                    )
+                    fig.update_layout(
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        font_color='white',
+                        height=500,
+                    )
+                    fig.update_traces(textinfo='label+value')
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    connection_names = df_rels['Connected_To'].tolist()
+                    selected_connection = st.selectbox(
+                        "Select a connection to see shared documents",
+                        ["(all files for " + top_match + ")"] + connection_names,
+                        key="connection_select"
+                    )
+
+                    if selected_connection.startswith("(all files"):
+                        st.subheader(f"Documents mentioning {top_match}")
+                        df_docs = pd.read_sql_query("""
+                            SELECT f.filename as File, f.dataset as DS, e.count as Mentions, f.rel_path as Path
+                            FROM entities e
+                            JOIN files f ON f.id = e.file_id
+                            WHERE e.normalized = ?
+                            ORDER BY e.count DESC
+                            LIMIT 50
+                        """, conn, params=[top_match])
+                    else:
+                        st.subheader(f"Documents mentioning both {top_match} & {selected_connection}")
+                        df_docs = pd.read_sql_query("""
+                            SELECT DISTINCT f.filename as File, f.dataset as DS, f.rel_path as Path
+                            FROM entities e1
+                            JOIN entities e2 ON e1.file_id = e2.file_id
+                            JOIN files f ON f.id = e1.file_id
+                            WHERE e1.normalized = ? AND e2.normalized = ?
+                            LIMIT 50
+                        """, conn, params=[top_match, selected_connection])
+
+                    if not df_docs.empty:
+                        st.dataframe(df_docs, width='stretch', hide_index=True, height=400)
+                    else:
+                        st.info("No documents found.")
                 else:
-                    st.dataframe(df_matches, width='stretch', hide_index=True)
-
-                    # Pick the top match for relationship display
-                    top_match = df_matches.iloc[0]['Name']
-                    st.subheader(f"Relationships: {top_match}")
-
-                    df_rels = pd.read_sql_query("""
-                        SELECT
-                            CASE WHEN entity_a = ? THEN entity_b ELSE entity_a END as Connected_To,
-                            file_count as Shared_Files
-                        FROM entity_cooccurrence
-                        WHERE entity_a = ? OR entity_b = ?
-                        ORDER BY file_count DESC
-                        LIMIT 50
-                    """, conn, params=[top_match, top_match, top_match])
-
-                    if not df_rels.empty:
-                        # Pie chart of connections
-                        import plotly.express as px
-                        fig = px.pie(
-                            df_rels.head(20), values='Shared_Files', names='Connected_To',
-                            title=f"Top connections for {top_match}",
-                            hole=0.3,
-                        )
-                        fig.update_layout(
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            plot_bgcolor='rgba(0,0,0,0)',
-                            font_color='white',
-                            height=500,
-                        )
-                        fig.update_traces(textinfo='label+value')
-                        st.plotly_chart(fig, use_container_width=True)
-
-                        # Select a connection to drill into
-                        connection_names = df_rels['Connected_To'].tolist()
-                        selected_connection = st.selectbox(
-                            "Select a connection to see shared documents",
-                            ["(all files for " + top_match + ")"] + connection_names,
-                            key="connection_select"
-                        )
-
-                        if selected_connection.startswith("(all files"):
-                            # Show docs for just the searched person
-                            st.subheader(f"Documents mentioning {top_match}")
-                            file_rows = conn.execute("""
-                                SELECT f.id, f.filename, f.dataset, f.rel_path, tc.extracted_text
-                                FROM entities e
-                                JOIN files f ON f.id = e.file_id
-                                JOIN text_cache tc ON tc.file_id = f.id
-                                WHERE e.normalized = ?
-                                ORDER BY e.count DESC
-                                LIMIT 50
-                            """, (top_match,)).fetchall()
-                            search_highlight = query_lower
-                        else:
-                            # Show docs containing BOTH people
-                            st.subheader(f"Documents mentioning both {top_match} & {selected_connection}")
-                            file_rows = conn.execute("""
-                                SELECT DISTINCT f.id, f.filename, f.dataset, f.rel_path, tc.extracted_text
-                                FROM entities e1
-                                JOIN entities e2 ON e1.file_id = e2.file_id
-                                JOIN files f ON f.id = e1.file_id
-                                JOIN text_cache tc ON tc.file_id = f.id
-                                WHERE e1.normalized = ? AND e2.normalized = ?
-                                LIMIT 50
-                            """, (top_match, selected_connection)).fetchall()
-                            search_highlight = selected_connection
-
-                        st.caption(f"{len(file_rows)} documents found")
-                        for fid, fname, ds, rel_path, text in file_rows:
-                            idx = text.lower().find(search_highlight)
-                            if idx >= 0:
-                                start = max(0, idx - 200)
-                                end = min(len(text), idx + len(search_highlight) + 200)
-                                snippet = text[start:end].strip()
-                            else:
-                                snippet = text[:400]
-
-                            with st.expander(f"[DS{ds}] {fname} (ID: {fid})"):
-                                st.markdown(f"Path: `{rel_path}`")
-                                st.markdown(f"...{snippet}...")
-                                if st.button("Show full text", key=f"person_full_{fid}"):
-                                    st.text_area("Full text", text, height=500, key=f"person_text_{fid}")
-                    else:
-                        st.info("No co-occurrence relationships found.")
-
-        else:
-            st.subheader("Full-Text Search")
-            st.caption("Search across 146M+ characters of extracted text")
-
-            search_term = st.text_input("Search term (case-insensitive)")
-
-            if search_term and st.button("Search"):
-                status = st.status(f"Searching for '{search_term}'...", expanded=True)
-                results_area = st.container()
-
-                cursor = conn.execute("""
-                    SELECT f.id, f.filename, f.dataset, f.rel_path, tc.extracted_text
-                    FROM text_cache tc
-                    JOIN files f ON f.id = tc.file_id
-                    WHERE tc.extracted_text LIKE ?
-                    LIMIT 200
-                """, (f"%{search_term}%",))
-
-                hit_count = 0
-                results = []
-                while True:
-                    rows = cursor.fetchmany(10)
-                    if not rows:
-                        break
-                    results.extend(rows)
-                    hit_count += len(rows)
-                    status.update(label=f"Found {hit_count} files so far...")
-
-                status.update(label=f"Done — {hit_count} files found", state="complete", expanded=False)
-
-                for fid, fname, ds, rel_path, text in results:
-                    lower_text = text.lower()
-                    idx = lower_text.find(search_term.lower())
-                    if idx >= 0:
-                        start = max(0, idx - 200)
-                        end = min(len(text), idx + len(search_term) + 200)
-                        context = text[start:end]
-                        # Bold the match
-                        match_start = idx - start
-                        match_end = match_start + len(search_term)
-                        highlighted = (
-                            context[:match_start]
-                            + "**" + context[match_start:match_end] + "**"
-                            + context[match_end:]
-                        )
-                    else:
-                        highlighted = text[:400]
-
-                    with results_area.expander(f"[DS{ds}] {fname} (ID: {fid})"):
-                        st.markdown(f"Path: `{rel_path}`")
-                        st.markdown(f"...{highlighted}...")
-                        if st.button("Show full text", key=f"full_{fid}"):
-                            st.text_area("Full extracted text", text, height=500, key=f"text_{fid}")
-
+                    st.info("No co-occurrence relationships found.")
 
     # ── TAB 3: METHODOLOGY / UNKNOWNS ──
     with tab_method:
