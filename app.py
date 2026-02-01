@@ -3,6 +3,8 @@
 
 import sqlite3
 import re
+import gzip
+import urllib.request
 import pandas as pd
 import streamlit as st
 from pathlib import Path
@@ -10,12 +12,42 @@ from pathlib import Path
 DB_PATH = Path("./epstein_files/epstein.db")
 BASE_DIR = Path("./epstein_files")
 
+RELEASE_URL = "https://github.com/LMSBAND/epstein-files-db/releases/download/v1.0"
+DB_PARTS = ["epstein.db.gz.part-aa", "epstein.db.gz.part-ab", "epstein.db.gz.part-ac", "epstein.db.gz.part-ad"]
+
 
 @st.cache_resource
 def get_db():
+    if not DB_PATH.exists():
+        _download_db()
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def _download_db():
+    """Download and reassemble the DB from GitHub release parts."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    gz_path = DB_PATH.parent / "epstein.db.gz"
+
+    progress = st.empty()
+    progress.info("Downloading database from GitHub release (155MB)...")
+
+    with open(gz_path, "wb") as out:
+        for i, part in enumerate(DB_PARTS):
+            progress.info(f"Downloading part {i+1}/{len(DB_PARTS)}: {part}")
+            url = f"{RELEASE_URL}/{part}"
+            urllib.request.urlretrieve(url, gz_path.parent / part)
+            with open(gz_path.parent / part, "rb") as p:
+                out.write(p.read())
+            (gz_path.parent / part).unlink()
+
+    progress.info("Decompressing database...")
+    with gzip.open(gz_path, "rb") as f_in, open(DB_PATH, "wb") as f_out:
+        while chunk := f_in.read(8 * 1024 * 1024):
+            f_out.write(chunk)
+    gz_path.unlink()
+    progress.success("Database ready!")
 
 
 def main():
