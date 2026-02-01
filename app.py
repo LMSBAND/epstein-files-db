@@ -62,17 +62,12 @@ def main():
     st.title("Epstein Files DB")
     st.caption(f"{total_files:,} files | {total_ents:,} people identified | {cooccur_edges:,} relationship edges")
 
-    # DB download button
-    db_file = Path(DB_PATH)
-    if db_file.exists():
-        with open(db_file, "rb") as f:
-            st.download_button(
-                label="⬇ PLEASE DOWNLOAD THE DATABASE",
-                data=f,
-                file_name="epstein.db",
-                mime="application/x-sqlite3",
-                type="primary",
-            )
+    # DB download link
+    st.link_button(
+        "⬇ DOWNLOAD THE DATABASE (GitHub Release)",
+        "https://github.com/LMSBAND/epstein-files-db/releases/tag/v1.0",
+        type="primary",
+    )
 
     tab_graph, tab_search, tab_method = st.tabs(["Relationship Graph", "Search", "Methodology / Unknowns"])
 
