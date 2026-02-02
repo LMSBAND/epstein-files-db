@@ -1,6 +1,6 @@
 # Epstein Files DB
 
-Interactive explorer for the DOJ's Epstein files release under the Epstein Files Transparency Act. Relationship graph, entity search, full-text search, and brute-force audit methodology across Datasets 8-11.
+Interactive explorer for the DOJ's Epstein files release under the Epstein Files Transparency Act. Relationship graph, entity search, full-text search, and brute-force audit methodology across Datasets 8-11. This dataset is incomplete, but gross as is. Would love help filling it out.
 
 ## Quick Start
 
