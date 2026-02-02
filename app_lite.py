@@ -31,6 +31,7 @@ def main():
     st.title("Epstein Files DB")
     st.caption(f"{total_files:,} files | {total_ents:,} people identified | {cooccur_edges:,} relationship edges")
     st.caption("This is the lite version — graph & search only. [Full version + database download on GitHub](https://github.com/LMSBAND/epstein-files-db)")
+    st.caption("*Incomplete dataset* — *still completely disgusting*")
     st.caption("For Minnesota, with love.")
 
     tab_graph, tab_search = st.tabs(["Relationship Graph", "Search People"])
