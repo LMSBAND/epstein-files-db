@@ -113,6 +113,7 @@ const fmt = d3.format(",");
 const ERA_TXT = {all: "", pre: "Documents dated before Epstein's June 30, 2008 guilty plea. ",
   post: "Documents dated after Epstein's June 30, 2008 guilty plea. "};
 function boot(DATA, era) {
+DATA = structuredClone(DATA);   // d3 rewrites link endpoints into node objects; keep the originals clean
 const colorOf = c => c < 3 && !DATA.groups[c].loners ? COLORS[c] : "var(--other)";
 d3.select("#svg").selectAll("*").remove(); d3.select("#svg").on(".zoom", null);
 document.getElementById("tip").style.display = "none";
