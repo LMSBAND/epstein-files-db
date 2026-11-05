@@ -166,6 +166,11 @@ for fid, text in c.execute("SELECT file_id, extracted_text FROM text_cache WHERE
     for p, rx in pin_re.items():
         if rx.search(text):
             ALL_people_in[fid].add(p); mentions[p] += len(rx.findall(text))
+era_count = {"pre": Counter(), "post": Counter()}   # person -> dated documents in each era
+for f, ps in ALL_people_in.items():
+    if (e := era_of.get(f)):
+        for p in ps:
+            era_count[e][p] += 1
 
 
 def title(n):
@@ -242,7 +247,8 @@ def build(fids, label):
                       "c": comm_of[n], "ds": dict(sorted(ds.items())), "docs": docs(n),
                       "withHub": len(files_of[n] & files_of.get(HUB, set())),
                       "co": [[o, s_] for s_, o in sorted(co[n], reverse=True)[:12]],
-                      "pinned": n in pinned, **describe(n)})
+                      "pinned": n in pinned, "pre": era_count["pre"][n], "post": era_count["post"][n],
+                      **describe(n)})
     links = [{"source": x, "target": y, "w": round(d["w"], 4), "s": d["s"]} for x, y, d in G.edges(data=True)]
     groups = []
     for i, cm in enumerate(comms):
