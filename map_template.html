@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Epstein Files: who appears with whom</title>
+<style>
+:root, .viz-root {
+  color-scheme: dark;
+  --surface-0: #111110;
+  --surface-1: #1a1a19;
+  --surface-2: #242422;
+  --border: #383835;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8f8e86;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --other: #6f6e68;
+  --edge: #8f8e86;
+  --focus: #f0efec;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--surface-0); }
+.viz-root { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text-primary);
+  display: grid; grid-template-columns: 1fr 340px; grid-template-rows: auto 1fr; height: 100vh; }
+header { grid-column: 1 / 3; padding: 14px 18px 10px; border-bottom: 1px solid var(--border); display: flex;
+  gap: 18px; align-items: end; flex-wrap: wrap; }
+header h1 { font-size: 17px; margin: 0 0 2px; }
+header p { margin: 0; color: var(--text-secondary); font-size: 12.5px; max-width: 760px; }
+.controls { display: flex; gap: 10px; margin-left: auto; align-items: center; }
+input[type=search] { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-primary);
+  padding: 6px 10px; border-radius: 6px; width: 220px; font: inherit; }
+button { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-primary); padding: 6px 10px;
+  border-radius: 6px; font: inherit; cursor: pointer; }
+button[aria-pressed=true] { border-color: var(--text-secondary); }
+#stage { position: relative; background: var(--surface-1); overflow: hidden; }
+svg { width: 100%; height: 100%; display: block; }
+.link { stroke: var(--edge); stroke-linecap: round; }
+.node circle { stroke: var(--surface-1); stroke-width: 2px; cursor: pointer; }
+.node text { fill: var(--text-primary); font-size: 11px; pointer-events: none; paint-order: stroke;
+  stroke: var(--surface-1); stroke-width: 3px; stroke-linejoin: round; }
+.faded { opacity: .12; }
+.node.sel circle { stroke: var(--focus); stroke-width: 2.5px; }
+.legend { position: absolute; left: 12px; bottom: 12px; background: rgba(26,26,25,.92); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px 11px; font-size: 12px; color: var(--text-secondary); max-width: 420px; }
+.legend div { display: flex; align-items: center; gap: 7px; margin: 2px 0; }
+.sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+#tip { position: absolute; pointer-events: none; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 9px; font-size: 12px; display: none; max-width: 260px; }
+#tip b { display: block; font-size: 13px; }
+#tip span { color: var(--text-secondary); }
+aside { border-left: 1px solid var(--border); background: var(--surface-1); overflow-y: auto; padding: 14px 16px; }
+aside h2 { font-size: 16px; margin: 0 0 4px; }
+aside h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 16px 0 6px; }
+aside .sub { color: var(--text-secondary); font-size: 12.5px; }
+aside .role { color: var(--text-primary); font-size: 13px; margin: 0 0 6px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 12px; padding: 4px 9px; border-radius: 999px; }
+.tie { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border);
+  cursor: pointer; }
+.tie:hover { color: var(--series-1); }
+.tie .n { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.bar { height: 4px; background: var(--text-muted); border-radius: 0 2px 2px 0; margin-top: 3px; }
+aside a { color: #86b6ef; text-decoration: none; font-variant-numeric: tabular-nums; }
+aside a:hover { text-decoration: underline; }
+.docs { columns: 2; font-size: 12.5px; }
+.empty { color: var(--text-muted); }
+#table { position: absolute; inset: 0; overflow: auto; background: var(--surface-1); display: none; padding: 10px 14px; }
+#table table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+#table th, #table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+#table td.num, #table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+#table tr { cursor: pointer; }
+#table tr:hover td { background: var(--surface-2); }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <header>
+    <div>
+      <h1>Who appears with whom in the DOJ Epstein files</h1>
+      <p id="sub"></p>
+    </div>
+    <div class="controls">
+      <div class="chips" id="era" role="group" aria-label="Document date">
+        <button class="chip" aria-pressed="true" data-e="all">All years</button>
+        <button class="chip" aria-pressed="false" data-e="pre">Before 2008 plea</button>
+        <button class="chip" aria-pressed="false" data-e="post">After 2008 plea</button>
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="Highlight public figures"></div>
+      <input type="search" id="q" placeholder="Find a person…" aria-label="Find a person" list="names">
+      <datalist id="names"></datalist>
+      <button id="tbl" aria-pressed="false">Table</button>
+      <button id="reset">Reset</button>
+    </div>
+  </header>
+  <div id="stage">
+    <svg id="svg" role="img" aria-label="Network of people who appear in the same documents"></svg>
+    <div class="legend" id="legend"></div>
+    <div id="tip" role="status"></div>
+    <div id="table"></div>
+  </div>
+  <aside id="panel" aria-live="polite"></aside>
+</div>
+<script>/*D3*/</script>
+<script>
+const ALLDATA = /*DATA*/null;
+const DS_START = [[2730265, 12], [2208000, 11], [1262782, 10], [39025, 9], [9665, 8], [9016, 7], [8529, 6], [8409, 5], [5705, 4], [3858, 3], [3159, 2], [1, 1]];
+const dsOf = e => { const n = +e.replace(/\D/g, ""); return (DS_START.find(([s]) => n >= s) || [0, 10])[1]; };
+const DOJ = (f, ds) => `https://www.justice.gov/epstein/files/DataSet%20${ds}/${f}`;
+const COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
+const fmt = d3.format(",");
+const ERA_TXT = {all: "", pre: "Documents dated before Epstein's June 30, 2008 guilty plea. ",
+  post: "Documents dated after Epstein's June 30, 2008 guilty plea. "};
+function boot(DATA, era) {
+const colorOf = c => c < 3 && !DATA.groups[c].loners ? COLORS[c] : "var(--other)";
+d3.select("#svg").selectAll("*").remove(); d3.select("#svg").on(".zoom", null);
+document.getElementById("tip").style.display = "none";
+document.getElementById("table").style.display = "none"; document.getElementById("tbl").setAttribute("aria-pressed", "false");
+const nodes = DATA.nodes, links = DATA.links, byId = new Map(nodes.map(n => [n.id, n]));
+const nbrs = new Map(nodes.map(n => [n.id, []]));
+links.forEach(l => { nbrs.get(l.source).push([l.target, l]); nbrs.get(l.target).push([l.source, l]); });
+nbrs.forEach(v => v.sort((a, b) => b[1].w - a[1].w));
+const m = DATA.meta;
+
+const E = ALLDATA.eras;
+document.getElementById("sub").textContent = ERA_TXT[era] + (era === "all" ? "" :
+  `${fmt(E.dated)} of ${fmt(E.total)} documents could be dated from their text; undated ones are left out. `) +
+  `${fmt(nodes.length)} people with the strongest ties, from ${fmt(m.files)} documents. A tie means two names ` +
+  `appear in the same document ${m.minShared}+ times, scored relative to how often each appears. Epstein himself ` +
+  `(${fmt(m.hubFiles)} documents) is left out because he is tied to everyone. Appearing together is not evidence of wrongdoing.`;
+
+const legend = document.getElementById("legend");
+legend.innerHTML = DATA.groups.slice(0, 3).map((g, i) =>
+  `<div><span class="sw" style="background:${COLORS[i]}"></span>Cluster: ${g.label}…</div>`).join("") +
+  `<div><span class="sw" style="background:var(--other)"></span>Smaller clusters (${DATA.groups.length - 3})</div>` +
+  `<div><span class="sw" style="border:1.5px solid var(--text-primary)"></span>Public figure, always shown (counted by name in the text)</div>` +
+  `<div style="margin-top:5px">Circle size = documents the person appears in · line weight = tie strength</div>`;
+
+const svg = d3.select("#svg"), g = svg.append("g");
+const W = () => svg.node().clientWidth, H = () => svg.node().clientHeight;
+const r = d3.scaleSqrt().domain([0, d3.max(nodes, d => d.files)]).range([4, 22]);
+const sw = d3.scaleLinear().domain(d3.extent(links, l => l.w)).range([.6, 3.2]);
+const so = d3.scaleLinear().domain(d3.extent(links, l => l.w)).range([.18, .6]);
+
+const sim = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id(d => d.id).distance(l => 26 + 50 * (1 - l.w)).strength(l => (l.source.c === l.target.c ? .3 : .02) + .5 * l.w))
+  .force("charge", d3.forceManyBody().strength(-120).distanceMax(240))
+  .force("collide", d3.forceCollide(d => r(d.files) + 6))
+  .stop();
+// Give each cluster its own region: anchors on a sunflower spiral, biggest clusters nearest the middle.
+const gs = DATA.groups, golden = Math.PI * (3 - Math.sqrt(5));
+const anchor = gs.map((g, i) => { if (g.loners) return [0, -170 * Math.sqrt(gs.length) * 1.3];
+  const rad = 170 * Math.sqrt(i) * 1.15; return [rad * Math.cos(i * golden), rad * Math.sin(i * golden) * .72]; });
+nodes.forEach(d => { const [ax, ay] = anchor[d.c]; d.x = ax + (Math.random() - .5) * 40; d.y = ay + (Math.random() - .5) * 40; });
+sim.force("x", d3.forceX(d => anchor[d.c][0]).strength(.16)).force("y", d3.forceY(d => anchor[d.c][1]).strength(.16));
+for (let i = 0; i < 500; i++) sim.tick();
+
+const link = g.append("g").selectAll("line").data(links).join("line").attr("class", "link")
+  .attr("stroke-width", l => sw(l.w)).attr("stroke-opacity", l => so(l.w) * (l.source.c === l.target.c ? 1 : .35));
+const egoG = g.append("g");
+const node = g.append("g").selectAll("g").data(nodes).join("g").attr("class", "node")
+  .attr("tabindex", 0).attr("role", "button").attr("aria-label", d => `${d.name}, ${d.files} documents`);
+node.append("circle").attr("r", d => r(d.files)).attr("fill", d => colorOf(d.c))
+  .attr("stroke", d => d.pinned ? "var(--text-primary)" : null).attr("stroke-width", d => d.pinned ? 1.5 : null);
+// Default labels: biggest first, skip any whose box would overlap a label or circle already placed.
+const placed = [], showLabel = new Set();
+const boxOf = d => [d.x + r(d.files) + 2, d.y - 7, d.x + r(d.files) + 4 + d.name.length * 6.1, d.y + 7];
+const hit = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+const circles = nodes.map(d => [d.x - r(d.files), d.y - r(d.files), d.x + r(d.files), d.y + r(d.files), d]);
+const prio = [...nodes].sort((a, b) => b.files - a.files);
+for (const d of [...prio.slice(0, 8), ...prio.filter(d => d.pinned), ...prio.slice(8, 45)]) {
+  if (showLabel.has(d.id)) continue;
+  const b = boxOf(d);
+  if (placed.some(p => hit(p, b)) || (showLabel.size >= 8 && circles.some(c => c[4] !== d && r(c[4].files) > 9 && hit(c, b)))) continue;
+  placed.push(b); showLabel.add(d.id);
+}
+const labelCut = null;
+node.append("text").attr("x", d => r(d.files) + 3).attr("dy", "0.35em").text(d => d.name)
+  .attr("display", d => showLabel.has(d.id) ? null : "none");
+
+function place() {
+  link.attr("x1", l => l.source.x).attr("y1", l => l.source.y).attr("x2", l => l.target.x).attr("y2", l => l.target.y);
+  node.attr("transform", d => `translate(${d.x},${d.y})`);
+}
+place();
+
+const zoom = d3.zoom().scaleExtent([.3, 6]).on("zoom", e => g.attr("transform", e.transform));
+svg.call(zoom);
+function fit(ms = 0) {
+  const [x0, x1] = d3.extent(nodes, d => d.x), [y0, y1] = d3.extent(nodes, d => d.y);
+  const k = Math.min(W() / (x1 - x0 + 120), H() / (y1 - y0 + 120), 2);
+  svg.transition().duration(ms).call(zoom.transform,
+    d3.zoomIdentity.translate(W() / 2, H() / 2).scale(k).translate(-(x0 + x1) / 2, -(y0 + y1) / 2));
+}
+fit();
+window.onresize = () => fit();
+
+node.call(d3.drag()
+  .on("start", (e, d) => { d.fx = d.x; d.fy = d.y; })
+  .on("drag", (e, d) => { d.x = d.fx = e.x; d.y = d.fy = e.y; if (!selected) { d.hx = d.x; d.hy = d.y; } place(); drawEgo(); })
+  .on("end", (e, d) => { d.fx = d.fy = null; }));
+
+let selected = null;
+nodes.forEach(d => { d.hx = d.x; d.hy = d.y; d.side = 1; });
+const txt = node.select("text");
+function labelBox(d) {
+  const w = d.name.length * 6.1 + 4, o = r(d.files) + 2;
+  return d.side > 0 ? [d.x + o, d.y - 7, d.x + o + w, d.y + 7] : [d.x - o - w, d.y - 7, d.x - o, d.y + 7];
+}
+function labelSet(ds) {                      // greedy: earlier entries win
+  const placed = [], out = new Set();
+  for (const d of ds) { const b = labelBox(d); if (placed.some(p => hit(p, b))) continue; placed.push(b); out.add(d.id); }
+  return out;
+}
+function setText(show) {
+  txt.attr("display", d => show.has(d.id) ? null : "none")
+    .attr("text-anchor", d => d.side > 0 ? "start" : "end")
+    .attr("x", d => d.side * (r(d.files) + 3));
+}
+function highlight(id) {
+  if (!id) { node.classed("faded", false); link.classed("faded", false); setText(showLabel); return; }
+  const keep = new Set([id, ...nbrs.get(id).map(x => x[0])]);
+  node.classed("faded", d => !keep.has(d.id));
+  link.classed("faded", l => l.source.id !== id && l.target.id !== id);
+  const order = [byId.get(id), ...[...keep].filter(k => k !== id).map(k => byId.get(k)).sort((a, b) => b.files - a.files)];
+  setText(labelSet(order));
+}
+
+let anim = null;
+function animate(targets, done) {             // targets: Map id -> [x, y]
+  if (anim) anim.stop();
+  const from = new Map([...targets.keys()].map(id => { const d = byId.get(id); return [id, [d.x, d.y]]; }));
+  anim = d3.timer(t => {
+    const k = d3.easeCubicOut(Math.min(1, t / 450));
+    targets.forEach(([x, y], id) => { const d = byId.get(id), [x0, y0] = from.get(id); d.x = x0 + (x - x0) * k; d.y = y0 + (y - y0) * k; });
+    place(); drawEgo();
+    if (k === 1) { anim.stop(); anim = null; done && done(); }
+  });
+}
+let egoSpokes = [];
+function drawEgo() {
+  egoG.selectAll("line").data(egoSpokes).join("line").attr("class", "link")
+    .attr("stroke", "var(--text-secondary)").attr("stroke-linecap", "round")
+    .attr("stroke-width", e => e.w).attr("stroke-opacity", .55)
+    .attr("x1", e => e.a.x).attr("y1", e => e.a.y).attr("x2", e => e.b.x).attr("y2", e => e.b.y);
+}
+function goHome() {
+  const t = new Map(nodes.filter(d => d.x !== d.hx || d.y !== d.hy).map(d => [d.id, [d.hx, d.hy]]));
+  nodes.forEach(d => d.side = 1); egoSpokes = []; drawEgo();
+  if (t.size) animate(t); 
+}
+
+const tip = document.getElementById("tip");
+node.on("mouseenter focus", (e, d) => {
+  if (!selected) highlight(d.id);
+  tip.innerHTML = `<b>${d.name}</b>${d.role ? `<span>${[d.role, d.country].filter(Boolean).join(" · ")}</span><br>` : ""}<span>${fmt(d.files)} documents · ${fmt(d.withHub)} also name Epstein<br>` +
+    `${d.co.length ? "click to spread out who they appear with" : "no shared documents with others on the map"}</span>`;
+  tip.style.display = "block";
+}).on("mousemove", e => {
+  const b = document.getElementById("stage").getBoundingClientRect();
+  tip.style.left = Math.min(e.clientX - b.left + 14, b.width - 270) + "px";
+  tip.style.top = (e.clientY - b.top + 14) + "px";
+}).on("mouseleave blur", () => { tip.style.display = "none"; if (!selected) highlight(null); })
+  .on("click keydown", (e, d) => { if (e.type === "keydown" && e.key !== "Enter") return; e.stopPropagation(); select(d.id, true); });
+svg.on("click", e => { if (e.target === svg.node()) select(null); });
+
+const panel = document.getElementById("panel");
+function select(id, center) {
+  selected = id;
+  node.classed("sel", d => d.id === id);
+  legend.style.display = id ? "none" : "";
+  if (!id) { panel.innerHTML = intro(); highlight(null); goHome(); return; }
+  const d = byId.get(id), ties = d.co, maxS = d3.max(ties, t => t[1]) || 1;
+
+  // Ego ring: everyone they appear with, spread evenly around them, strongest at the top going clockwise.
+  const ringIds = [...ties.map(t => t[0]), ...nbrs.get(id).map(x => x[0])].filter((v, i, a) => a.indexOf(v) === i).slice(0, 16);
+  const shareOf = new Map(ties.map(([o, s_]) => [o, s_]));
+  const R = 70 + ringIds.length * 11;
+  const targets = new Map(nodes.filter(n => n.id !== id && !ringIds.includes(n.id) && (n.x !== n.hx || n.y !== n.hy)).map(n => [n.id, [n.hx, n.hy]]));
+  targets.set(id, [d.hx, d.hy]);
+  nodes.forEach(n => n.side = 1);
+  ringIds.forEach((o, i) => {
+    const a = -Math.PI / 2 + 2 * Math.PI * i / ringIds.length, n = byId.get(o);
+    targets.set(o, [d.hx + R * Math.cos(a), d.hy + R * Math.sin(a)]);
+    n.side = Math.cos(a) >= -1e-6 ? 1 : -1;
+  });
+  const ringSet = new Set([id, ...ringIds]);
+  node.classed("faded", n => !ringSet.has(n.id)).filter(n => ringSet.has(n.id)).raise();
+  link.classed("faded", true);
+  const ws = d3.scaleSqrt().domain([1, maxS]).range([1, 4]);
+  egoSpokes = ringIds.map(o => ({ a: d, b: byId.get(o), w: ws(shareOf.get(o) || 1) }));
+  setText(new Set());
+  animate(targets, () => setText(ringSet));
+  if (center) {
+    const k = Math.min(W() / (2 * R + 340), H() / (2 * R + 110), 2.2);
+    svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(W() / 2, H() / 2).scale(k).translate(-d.hx, -d.hy));
+  }
+
+  panel.innerHTML = `<h2>${d.name}</h2>${d.role ? `<div class="role">${d.role}</div>` : ""}<div class="sub">${[d.group, d.country].filter(Boolean).join(" · ")}${
+      d.evidence && d.evidence.length ? ` · title from ${d.evidence.map(e => `<a href="${DOJ(e + ".pdf", dsOf(e))}" target="_blank" rel="noopener">${e}</a>`).join(", ")}` : ""}</div>
+    <div class="sub">${fmt(d.files)} documents · ${fmt(d.withHub)} documents also name Epstein</div>
+    <div class="sub">By data set: ${Object.entries(d.ds).map(([k, v]) => `DS${k} ${fmt(v)}`).join(" · ")}</div>
+    <h3>Appears most with (shared documents)</h3>
+    ${ties.length ? ties.map(([o, s_]) => `<div class="tie" data-id="${o}"><div>${byId.get(o).name}
+      <div class="bar" style="width:${100 * s_ / maxS}%"></div></div><div class="n">${fmt(s_)}</div></div>`).join("")
+      : '<div class="empty">No shared documents with anyone else on the map.</div>'}
+    <h3>Documents (most connected first)</h3>
+    <div class="docs">${d.docs.map(([f, ds]) => `<div><a href="${DOJ(f, ds)}" target="_blank" rel="noopener">${f.replace(".pdf", "")}</a></div>`).join("")}</div>`;
+}
+function intro() {
+  const top = [...nodes].sort((a, b) => b.files - a.files).slice(0, 12);
+  return `<h2>Pick someone</h2><div class="sub">Hover a circle to see who they're tied to. Click to pin it and list
+    their strongest ties and source documents, each linked to the DOJ file. Drag to rearrange, scroll to zoom.</div>
+    <h3>Most-documented</h3>${top.map(d => `<div class="tie" data-id="${d.id}"><div>${d.name}</div>
+    <div class="n">${fmt(d.files)}</div></div>`).join("")}`;
+}
+panel.innerHTML = intro();
+function fromHash() { const v = decodeURIComponent(location.hash.slice(1)).toLowerCase();
+  const n = v && nodes.find(n => n.name.toLowerCase() === v || n.id === v); if (n && n.id !== selected) select(n.id, true); }
+window.onhashchange = fromHash; fromHash();
+panel.onclick = e => { const t = e.target.closest(".tie"); if (t) select(t.dataset.id, true); };
+
+document.getElementById("names").innerHTML = nodes.map(n => `<option value="${n.name}">`).join("");
+document.getElementById("q").onchange = e => {
+  const v = e.target.value.trim().toLowerCase(), hit = nodes.find(n => n.name.toLowerCase() === v) ||
+    nodes.find(n => n.name.toLowerCase().includes(v));
+  if (hit) select(hit.id, true);
+};
+document.getElementById("reset").onclick = () => { document.getElementById("q").value = ""; select(null); fit(500); };
+
+// Public-figure filter: highlight one group, fade everyone else.
+const GROUPS = [...new Set(nodes.filter(n => n.group).map(n => n.group))].filter(g => nodes.filter(n => n.group === g).length >= 2)
+  .sort((a, b) => (a === "Government" ? -1 : b === "Government" ? 1 : a.localeCompare(b)));
+const chips = document.getElementById("chips");
+chips.innerHTML = ["Public figures", ...GROUPS].map(g => `<button class="chip" aria-pressed="false" data-g="${g}">${g}</button>`).join("");
+chips.onclick = e => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  const on = b.getAttribute("aria-pressed") !== "true";
+  chips.querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", "false"));
+  if (selected) select(null);
+  if (!on) { highlight(null); return; }
+  b.setAttribute("aria-pressed", "true");
+  const g_ = b.dataset.g, inG = n => g_ === "Public figures" ? n.pinned : n.group === g_;
+  node.classed("faded", n => !inG(n)); link.classed("faded", true);
+  setText(labelSet(nodes.filter(inG).sort((a, b) => b.files - a.files)));
+};
+
+const tbl = document.getElementById("table"), tbtn = document.getElementById("tbl");
+tbl.innerHTML = `<table><thead><tr><th>Person</th><th>Role</th><th>Group</th><th>Country</th><th class="num">Documents</th><th class="num">Also name Epstein</th>
+  <th class="num">Strong ties</th><th>Strongest tie</th></tr></thead><tbody>${[...nodes].sort((a, b) => b.files - a.files)
+  .map(d => `<tr data-id="${d.id}"><td>${d.name}</td><td>${d.role}</td><td>${d.group}</td><td>${d.country}</td><td class="num">${fmt(d.files)}</td><td class="num">${fmt(d.withHub)}</td>
+  <td class="num">${nbrs.get(d.id).length}</td><td>${nbrs.get(d.id)[0] ? byId.get(nbrs.get(d.id)[0][0]).name : ""}</td></tr>`).join("")}</tbody></table>`;
+tbtn.onclick = () => { const on = tbtn.getAttribute("aria-pressed") !== "true"; tbtn.setAttribute("aria-pressed", on);
+  tbl.style.display = on ? "block" : "none"; };
+tbl.onclick = e => { const tr = e.target.closest("tr[data-id]"); if (tr) { tbtn.click(); select(tr.dataset.id, true); } };
+}
+const eraEl = document.getElementById("era");
+eraEl.onclick = e => {
+  const b = e.target.closest(".chip"); if (!b || b.getAttribute("aria-pressed") === "true") return;
+  eraEl.querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", c === b));
+  document.getElementById("q").value = ""; history.replaceState(null, "", location.pathname + location.search);
+  boot(ALLDATA[b.dataset.e], b.dataset.e);
+};
+boot(ALLDATA.all, "all");
+</script>
+</body>
+</html>

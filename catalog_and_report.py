@@ -324,7 +324,7 @@ def run_keyword_search(conn, keywords=None):
     print(f"  Searching {len(rows)} files with text...\n")
 
     # Compile patterns
-    patterns = {kw: re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords}
+    patterns = {kw: re.compile(r'\b' + re.escape(kw) + r'\b', re.IGNORECASE) for kw in keywords}
 
     total_hits = 0
     files_with_hits = set()

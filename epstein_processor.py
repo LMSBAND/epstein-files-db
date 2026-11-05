@@ -259,7 +259,33 @@ DEFAULT_KEYWORDS = [
     "contribution",
     "anonymous donation",
     "directed gift",
+    # === VIRAL "CODE WORD" CLAIMS (Feb 2026) ===
+    # Terms the internet flagged after the DOJ release. Counted so the claims can be checked
+    # against the text, not because they are established codes.
+    "pizza",
+    "grape soda",
+    "beef jerky",
+    "jerky",
+    "ice cream",
+    "dentist",
+    "cheese",
+    "cheeseburger",
+    "pasta",
+    "hot dog",
+    "hotdog",
+    "walnut",
+    "sauce",
+    "map",
+    "chinese cookie",
+    "no one else can understand",
+    "choslyh",
+    "cannibal",
+    "cannibalism",
+    "client list",
 ]
+
+# Matched as whole words (so "map" does not hit "mapping").
+VIRAL_TERMS = DEFAULT_KEYWORDS[DEFAULT_KEYWORDS.index("pizza"):]
 
 
 def setup_directories():

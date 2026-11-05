@@ -39,7 +39,16 @@ def main():
         type="primary",
     )
 
-    tab_graph, tab_search, tab_method = st.tabs(["Relationship Graph", "Search", "Methodology / Unknowns"])
+    tab_map, tab_graph, tab_search, tab_method = st.tabs(
+        ["Map", "Classic Graph", "Search", "Methodology / Unknowns"])
+
+    # ── TAB 0: MAP (built offline by build_map.py) ──
+    with tab_map:
+        map_path = BASE_DIR / "output" / "map.html"
+        if map_path.exists():
+            st.components.v1.html(map_path.read_text(), height=900, scrolling=False)
+        else:
+            st.info("Map not built yet. Run: .venv/bin/python build_map.py")
 
     # ── TAB 1: RELATIONSHIP GRAPH ──
     with tab_graph:
