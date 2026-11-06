@@ -88,7 +88,21 @@ charge charges handling remittance advice shipper reference airtime local succes
 package fuel debtor active signed number accciam equty buyout llp mellon bny pony civ material educational
 background amicus
 investors wireless cingular alpha express saver overnight pickup portfolio protection writing
-release pram performance strong secret island norther miaow sts delivery grantor""".split())
+release pram performance strong secret island norther miaow sts delivery grantor
+adobe acrobat reader sums aucun cas destinataire jabwcpa gmail kietzke miscellaneous assets cycle billing
+address bklyn nye cantot paid pald chedc decoded vin dir asst dividendyiel dfigures interests fedwire debit
+stat gift processing short-term lose fund bullish mxn peak possible bankruptcies watercraft flagler drive
+safekeepingor managementofthose stolen tambien ofrecemos rorkevon wachovia bk wholly owned subsidiary wkend
+steams card usvi crim evid
+conditioning waybills attested copy brillo chaseside ogb sprinkler confirm ansul certificate cir intell
+ck maintenance document dept rata okay slog sarkom trafficking weather gear lighter fluid daly resort holdings
+begin""".split())
+# Whole names that are not people but whose words can be (Long, Short, Charles...).
+NOT_NAMES = {"long term", "short term", "dam conan", "dom conan", "dole conan", "dole certain", "james ce",
+             "jp morgan", "j.p. morga", "j.p. morgan tr", "charles de gaulle", "beyond center", "mau mum",
+             "na fl", "new yak", "off peak", "oprime el", "fon myers", "fort walton", "florida keys",
+             "con ed", "pon st joe", "fon walton", "fort myers", "j.p morgan", "jpmorgan pryor", "john wayne",
+             "parry slog", "pro rata"}
 SUFFIX = re.compile(r"(\s+(subject|sent|cc|to|from|wrote|re)\b.*$)|(/.*$)|(\s*<.*$)")
 
 
@@ -108,11 +122,35 @@ ALIASES.update({"leslie wexner": "les wexner", "liam o'sullivan": "liam osulliva
                 "brad gillin": "bradley gillin", "stew oldfield": "stewart oldfield",
                 "paul morns": "paul morris",
                 "abigail wenxer": "abigail wexner", "jeanie brennan": "jeanne brennan",
-                "andersson dubin": "eva andersson dubin", "dave rodgers": "david rodgers",
+                "andersson dubin": "eva dubin", "dave rodgers": "david rodgers",
                 "tracy calvin dunlap": "tracy dunlap", "e. epstein": "jeffrey epstein",
                 "carlo plajo-biroll": "carlo pirzio-biroli",
                 "carlo pinio-biroll": "carlo pirzio-biroli", "darren lndyke": "darren indyke",
-                "erika kellerhai": "erika kellerhals"})
+                "erika kellerhai": "erika kellerhals",
+                "alexander acosta": "alex acosta", "r. alexander acosta": "alex acosta",
+                "bradley edwards": "brad edwards", "jean luc": "jean-luc brunel", "jean luc brunel": "jean-luc brunel",
+                "david stem": "david stern", "gary kemey": "gary kerney", "icaryna shuliak": "karyna shuliak",
+                "icatyna shuliak": "karyna shuliak", "karina shuliak": "karyna shuliak",
+                "jack alan goldberger": "jack goldberger", "kathy ruemmler": "kathryn ruemmler",
+                "lany visoski": "lawrence visoski", "larry visoski larry": "lawrence visoski",
+                "larry visoski": "lawrence visoski", "larry delson": "lawrence delson",
+                "rich barnett": "richard barnett", "steve hanson": "stephen hanson",
+                "david mitchell mitchell": "david mitchell", "a. de rothschild": "ariane de rothschild",
+                "bamaby marsh": "barnaby marsh", "bin sulayem": "sultan bin sulayem",
+                "eva andersson dubin": "eva dubin", "g. max": "ghislaine maxwell", "g. maxwell": "ghislaine maxwell",
+                "ghlslaine maxwell": "ghislaine maxwell", "ghlslalne maxwell": "ghislaine maxwell",
+                "a. marie villafafia": "marie villafana", "a. marie villafana": "marie villafana",
+                "barry krisher": "barry krischer", "jay letkowitz": "jay lefkowitz", "ja lefkowitz": "jay lefkowitz",
+                "daniel zwim": "daniel zwirn", "kenneth starr": "ken starr", "jeffrey sloman": "jeff sloman",
+                "detective recarey": "joseph recarey", "thomas pritzker": "tom pritzker",
+                "lilly ann sanchez": "ann sanchez", "mark lawrence epstein": "mark epstein",
+                "merwin dela": "merwin dela cruz", "dela cruz": "merwin dela cruz",
+                "joichi ito": "joi ito", "karin shuliak": "karyna shuliak", "mort zuckerman": "mortimer zuckerman",
+                "ariane de rothschild le": "ariane de rothschild", "jay lefkowite": "jay lefkowitz",
+                "jay leflcowitz": "jay lefkowitz", "joe recarey": "joseph recarey", "lili ann sanchez": "ann sanchez",
+                "bob josephsberg": "robert josefsberg", "honorable r. alexander acosta": "alex acosta",
+                "ms maxwell": "ghislaine maxwell", "martin golick yes": "martin golick",
+                "jeffrey epste": "jeffrey epstein"})
 
 
 def resolve(n):
@@ -135,6 +173,10 @@ def _clean(name):
     if n in ALIASES:
         return ALIASES[n]
     toks = n.split()
+    if n in NOT_NAMES:
+        return None
+    if "epstein" in toks and toks[0] != "mark":       # "jeffrey epstein sat", "defendant epstein", ...
+        return HUB
     if not (2 <= len(toks) <= 4) or len(n) > 40 or re.search(r"[0-9@#$%&*=+|\\]", n):
         return None
     if any(t in JUNK_WORDS for t in toks) or any(len(t.strip(".")) < 2 and not t.endswith(".") for t in toks):
