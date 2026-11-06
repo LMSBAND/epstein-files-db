@@ -1,76 +1,61 @@
 # Epstein Files DB
 
-Interactive explorer for the DOJ's Epstein files release under the Epstein Files Transparency Act. Relationship graph, entity search, full-text search, and brute-force audit methodology across Datasets 8-11. This dataset is incomplete, but gross as is. Would love help filling it out.
+Text and metadata from the DOJ's Epstein files release (Epstein Files Transparency Act) in one SQLite database, plus a relationship map of who appears with whom. This dataset is incomplete, but gross as is. Would love help filling it out.
 
-## Quick Start
+![Relationship map](screenshots/map.png)
 
-### 1. Clone the repo
+## Quick start
 
 ```bash
 git clone https://github.com/LMSBAND/epstein-files-db.git
 cd epstein-files-db
-```
-
-### 2. Download the database
-
-Download `epstein.db` (~835 MB) from [GitHub Releases](https://github.com/LMSBAND/epstein-files-db/releases/tag/v1.0) and place it at:
-
-```
-epstein_files/epstein.db
-```
-
-The release contains split gzip parts. To reassemble:
-
-```bash
-mkdir -p epstein_files
-cd epstein_files
-# Download all parts, then:
-cat epstein.db.gz.part-* > epstein.db.gz
-gunzip epstein.db.gz
-cd ..
-```
-
-### 3. Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 4. Run
+Download `epstein.db.gz` and `SHA256SUMS` from the [latest release](https://github.com/LMSBAND/epstein-files-db/releases/latest), then:
 
 ```bash
-streamlit run app.py
+sha256sum -c SHA256SUMS
+gunzip epstein.db.gz
+mkdir -p epstein_files && mv epstein.db epstein_files/
 ```
 
-Opens in your browser at `http://localhost:8501`.
+Build and open the map:
 
-## Screenshots
+```bash
+python build_map.py
+xdg-open epstein_files/output/map.html     # or open it in any browser
+```
 
-![Relationship Graph](screenshots/graph.png)
-![Person Search & Relationships](screenshots/search.png)
-![Methodology](screenshots/methodology.png)
+## The map
 
-## Features
+- People ranked by how many documents they appear in. Ties are scored by association (shared documents relative to how often each person appears), so prolific names don't tie to everything.
+- Epstein is left out of the drawing because he co-occurs with everyone.
+- Clusters come from community detection. Click anyone to see their strongest ties and source documents, each linked to the DOJ file.
+- **All years / Before 2008 plea / After 2008 plea**: documents split at Epstein's June 30, 2008 guilty plea. Dates are pulled from the text (email headers first, then dates in the body); undated documents appear only under All years. A dashed gold ring marks people who also appear in the other era.
+- Appearing in the same document as someone is not evidence of wrongdoing.
 
-- **Relationship Graph** - Interactive network visualization of people co-occurring in documents. VIP nodes (Epstein, Maxwell, Trump, Clinton, Prince Andrew, etc.) highlighted.
-- **Person Search** - Search by name, view connections, shared documents, and text snippets.
-- **Full-Text Search** - Search across 146M+ characters of extracted text from all documents.
-- **Methodology Tab** - Documents the brute-force audit of Datasets 8-11, including fill rates, 404 patterns, and open questions.
+## Scripts
 
-## Database Schema
+| Script | What it does |
+|---|---|
+| `ingest.py` | Streams DOJ data sets into the DB: download a PDF, extract text (pdftotext, tesseract OCR for scans), store it, delete the PDF |
+| `ner_extract.py` | spaCy named-entity extraction over the stored text |
+| `build_map.py` | Builds the standalone map HTML from the DB |
+| `doc_dates.py` | Best-guess document date from its text |
+| `ocr_backlog.py` | OCRs long documents that ingest skipped |
+| `person_snippets.py` | Text snippets around a name, with document IDs |
+| `viral_terms.py` | Counts of the viral "code word" claims, with sample contexts |
+
+## Database schema
 
 | Table | Description |
-|-------|-------------|
-| `files` | All downloaded files with metadata (filename, dataset, path, size) |
-| `entities` | NER-extracted entities (PERSON, ORG, etc.) per file |
-| `entity_cooccurrence` | People who appear in the same documents, with shared file counts |
-| `text_cache` | Extracted text from every file (~146M characters) |
-
-## Requirements
-
-- Python 3.10+
-- ~1 GB RAM (database is queried locally via SQLite)
-- ~900 MB disk for the database file
+|---|---|
+| `files` | One row per document: filename, data set, size, sha256 |
+| `text_cache` | Extracted text for each document |
+| `entities` | NER entities (PERSON, ORG, etc.) per document |
+| `entity_cooccurrence` | Pairs of people who appear in the same documents |
+| `ingest_hits`, `ingest_chunks` | Ingest bookkeeping: page counts and progress through the EFTA number range |
 
 ## License
 

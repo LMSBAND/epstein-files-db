@@ -1,4 +1,3 @@
-streamlit
-pandas
-pyvis
-plotly
+networkx
+requests
+spacy

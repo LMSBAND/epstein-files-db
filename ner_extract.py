@@ -10,6 +10,7 @@ Usage:
 
 import sys
 import sqlite3
+import time
 import re
 from pathlib import Path
 from collections import defaultdict, Counter
@@ -20,10 +21,11 @@ import spacy
 BASE_DIR = Path("./epstein_files")
 DB_PATH = BASE_DIR / "epstein.db"
 OUTPUT_DIR = BASE_DIR / "output"
+SIDE_DB = BASE_DIR / "entities_new.db"
 
 
 def get_db():
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=300)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
@@ -85,52 +87,40 @@ def is_junk(text):
     return False
 
 
-def extract_entities(conn, batch_size=100):
-    """Run spaCy NER over all text_cache entries."""
+def extract_entities(conn, n_process=8, commit_every=500):
+    """Run spaCy NER over text_cache entries that have no entities yet (parallel, streamed)."""
     init_tables(conn)
-
-    # Check what's already done
-    done_ids = set(r[0] for r in conn.execute(
-        "SELECT DISTINCT file_id FROM entities"
-    ).fetchall())
-
-    rows = conn.execute("""
-        SELECT tc.file_id, tc.extracted_text
-        FROM text_cache tc
-        WHERE tc.char_count > 10
-        ORDER BY tc.file_id
-    """).fetchall()
-
-    todo = [(fid, txt) for fid, txt in rows if fid not in done_ids]
-    print(f"Files with text: {len(rows)}")
-    print(f"Already processed: {len(done_ids)}")
-    print(f"Remaining: {len(todo)}")
-
+    # Entities go to a side DB first: ingest.py holds the main DB's write lock for up to a minute at a
+    # time, which would stall every commit here. merge_side() folds them into the main DB in one go.
+    side = sqlite3.connect(str(SIDE_DB), timeout=300)
+    side.execute("CREATE TABLE IF NOT EXISTS entities (file_id INTEGER, entity_text TEXT, entity_label TEXT,"
+                 " normalized TEXT, count INTEGER)")
+    side.execute("CREATE TABLE IF NOT EXISTS done (file_id INTEGER PRIMARY KEY)")
+    done_ids = set(r[0] for r in conn.execute("SELECT DISTINCT file_id FROM entities"))
+    done_ids |= set(r[0] for r in side.execute("SELECT file_id FROM done"))
+    todo = [fid for (fid,) in conn.execute(
+        "SELECT file_id FROM text_cache WHERE char_count > 10 ORDER BY file_id") if fid not in done_ids]
+    print(f"Already processed: {len(done_ids)}  Remaining: {len(todo)}", flush=True)
     if not todo:
-        print("All files already processed.")
         return
 
+    reader = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=300)
+
+    def texts():
+        for i in range(0, len(todo), 500):
+            chunk = todo[i:i + 500]
+            q = "SELECT file_id, extracted_text FROM text_cache WHERE file_id IN (%s)" % ",".join("?" * len(chunk))
+            for fid, text in reader.execute(q, chunk):
+                yield text[:50000], fid      # first 50K chars only, for speed
+
     nlp = spacy.load("en_core_web_sm", disable=["tagger", "parser", "lemmatizer"])
-    # Only keep NER
-    nlp.max_length = 500_000  # bump limit for big docs
+    nlp.max_length = 500_000
 
-    processed = 0
-    total_entities = 0
-
-    for file_id, text in todo:
-        # Truncate very long texts to first 50K chars for speed
-        if len(text) > 50000:
-            text = text[:50000]
-
-        try:
-            doc = nlp(text)
-        except Exception:
-            processed += 1
-            continue
-
-        # Count entities per file
-        ent_counts = Counter()
-        ent_labels = {}
+    processed = total_entities = 0
+    pending, batch_ids = [], []
+    t0 = time.time()
+    for doc, file_id in nlp.pipe(texts(), as_tuples=True, n_process=n_process, batch_size=50):
+        ent_counts, ent_labels = Counter(), {}
         for ent in doc.ents:
             if ent.label_ not in ("PERSON", "ORG", "GPE", "NORP", "FAC", "EVENT", "LAW"):
                 continue
@@ -139,22 +129,40 @@ def extract_entities(conn, batch_size=100):
                 continue
             ent_counts[norm] += 1
             ent_labels[norm] = ent.label_
-
-        # Insert
-        for norm, count in ent_counts.items():
-            conn.execute(
-                "INSERT INTO entities (file_id, entity_text, entity_label, normalized, count) VALUES (?, ?, ?, ?, ?)",
-                (file_id, norm, ent_labels[norm], norm.lower(), count)
-            )
-            total_entities += 1
-
+        pending.extend((file_id, n, ent_labels[n], n.lower(), c) for n, c in ent_counts.items())
+        batch_ids.append(file_id)
         processed += 1
-        if processed % 50 == 0:
-            conn.commit()
-            print(f"  {processed}/{len(todo)} files, {total_entities} entities extracted")
+        if processed % commit_every == 0:
+            side.executemany("INSERT INTO entities VALUES (?, ?, ?, ?, ?)", pending)
+            side.executemany("INSERT OR IGNORE INTO done VALUES (?)", [(f,) for f in batch_ids])
+            side.commit(); batch_ids = []
+            total_entities += len(pending); pending = []
+            rate = processed / (time.time() - t0)
+            print(f"  {processed}/{len(todo)} files, {total_entities} entities, {rate:.0f} files/s,"
+                  f" ~{(len(todo) - processed) / rate / 60:.0f} min left", flush=True)
+    side.executemany("INSERT INTO entities VALUES (?, ?, ?, ?, ?)", pending)
+    side.executemany("INSERT OR IGNORE INTO done VALUES (?)", [(f,) for f in batch_ids])
+    side.commit()
+    total_entities += len(pending)
+    side.close()
+    merge_side(conn)
+    print(f"\nDone: {processed} files, {total_entities + 0} entities", flush=True)
 
+
+def merge_side(conn):
+    """Move entities from the side DB into the main DB (one write transaction)."""
+    if not SIDE_DB.exists():
+        return
+    conn.execute("ATTACH DATABASE ? AS side", (str(SIDE_DB),))
+    n = conn.execute("SELECT count(*) FROM side.entities").fetchone()[0]
+    print(f"Merging {n} entity rows into the main DB...", flush=True)
+    conn.execute("INSERT INTO entities (file_id, entity_text, entity_label, normalized, count)"
+                 " SELECT file_id, entity_text, entity_label, normalized, count FROM side.entities"
+                 " WHERE file_id NOT IN (SELECT DISTINCT file_id FROM main.entities)")
     conn.commit()
-    print(f"\nDone: {processed} files, {total_entities} entities")
+    conn.execute("DETACH DATABASE side")
+    SIDE_DB.unlink()
+    print("Merged.", flush=True)
 
 
 def build_cooccurrence(conn, min_docs=2):
@@ -305,8 +313,10 @@ def main():
     command = sys.argv[1].lower()
 
     if command == "extract":
-        extract_entities(conn)
+        extract_entities(conn, n_process=int(sys.argv[2]) if len(sys.argv) > 2 else 8)
         build_cooccurrence(conn)
+    elif command == "merge":
+        merge_side(conn)
     elif command == "cooccur":
         min_docs = int(sys.argv[2]) if len(sys.argv) > 2 else 2
         build_cooccurrence(conn, min_docs=min_docs)
